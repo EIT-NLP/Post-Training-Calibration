@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trl"
+description = "Minimal vendored TRL runtime for OPD experiments."
+authors = [
+    { name = "Hugging Face TRL contributors" }
+]
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = [
+    "transformers", "language modeling", "post-training", "distillation", "opd"
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14"
+]
+requires-python = ">=3.10"
+dependencies = [
+    "accelerate>=1.4.0",
+    "datasets>=4.7.0",  # Support Json type and on_mixed_types="use_json"
+    "jinja2",
+    "packaging>20.0",
+    "transformers>=4.56.2",
+]
+dynamic = ["version"]
+
+[project.urls]
+Upstream = "https://github.com/huggingface/trl"
+
+[project.optional-dependencies]
+deepspeed = [
+    "deepspeed>=0.14.4",
+    "transformers!=5.1.0",  # see transformers#43780
+]
+vllm = [
+    "vllm>=0.11.0,<=0.17.1",
+    "fastapi",
+    "pydantic",
+    "aiohttp>=3.13.3",
+    "requests",
+    "uvicorn"
+]
+math_verify = [
+    "math-verify>=0.5.2",
+]
+
+[tool.setuptools]
+package-dir = {"trl" = "trl"}
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }

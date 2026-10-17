@@ -1,0 +1,92 @@
+# Rebuttal Llama OPD training and evaluation commands
+#
+# This mirrors command.txt but switches the student backbone to
+# meta-llama/Llama-3.1-8B-Instruct. OPD remains full-parameter training; do not
+# pass LoRA/QLoRA flags.
+
+conda activate opdenv
+export PYTHONNOUSERSITE=1
+unset PYTHONPATH
+
+cd /path/to/this_repo/code/OPD_training/trl
+python -m pip install -e .
+
+export STUDENT_MODEL="${STUDENT_MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
+export TEACHER_MODEL="${TEACHER_MODEL:-deepseek-ai/DeepSeek-R1-Distill-Qwen-32B}"
+export OPD_DATASET="${OPD_DATASET:-/path/to/llama_student_generated_math_rollouts}"
+export OPD_OUTPUT_DIR="${OPD_OUTPUT_DIR:-outputs/llama31_8b_opd_math_rl_48k}"
+export ACCELERATE_CONFIG="${ACCELERATE_CONFIG:-ds_zero2_3gpu.yaml}"
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export TOKENIZERS_PARALLELISM=false
+
+export CUDA_VISIBLE_DEVICES="${VLLM_CUDA_VISIBLE_DEVICES:-3}"
+python -m trl.scripts.vllm_serve \
+  --model "${STUDENT_MODEL}" \
+  --host "${VLLM_HOST:-127.0.0.1}" \
+  --port "${VLLM_PORT:-18002}" \
+  --tensor_parallel_size "${VLLM_TENSOR_PARALLEL_SIZE:-1}" \
+  --data_parallel_size "${VLLM_DATA_PARALLEL_SIZE:-1}" \
+  --gpu_memory_utilization "${VLLM_GPU_MEMORY_UTILIZATION:-0.85}" \
+  --enable_prefix_caching true \
+  --max_model_len "${VLLM_MAX_MODEL_LEN:-32768}" \
+  --dtype bfloat16
+
+export CUDA_VISIBLE_DEVICES="${TRAIN_CUDA_VISIBLE_DEVICES:-0,1,2}"
+
+accelerate launch \
+  --config_file "${ACCELERATE_CONFIG}" \
+  train_gold.py \
+  --model_name_or_path "${STUDENT_MODEL}" \
+  --teacher_model_name_or_path "${TEACHER_MODEL}" \
+  --teacher_tokenizer_name_or_path "${TEACHER_MODEL}" \
+  --dataset_name "${OPD_DATASET}" \
+  --dataset_train_split train \
+  --output_dir "${OPD_OUTPUT_DIR}" \
+  --gradient_checkpointing true \
+  --num_train_epochs "${OPD_NUM_EPOCHS:-1}" \
+  --per_device_train_batch_size "${OPD_PER_DEVICE_BATCH_SIZE:-1}" \
+  --gradient_accumulation_steps "${OPD_GRADIENT_ACCUMULATION_STEPS:-1}" \
+  --generation_batch_size "${OPD_GENERATION_BATCH_SIZE:-1}" \
+  --max_length "${OPD_MAX_LENGTH:-32768}" \
+  --max_completion_length "${OPD_MAX_COMPLETION_LENGTH:-16384}" \
+  --learning_rate "${OPD_LEARNING_RATE:-1e-6}" \
+  --dtype bfloat16 \
+  --ddp_find_unused_parameters false \
+  --uld_skip_student_eos false \
+  --uld_skip_teacher_eos false \
+  --uld_distillation_weight 1.0 \
+  --uld_crossentropy_weight 0.0 \
+  --uld_use_hybrid_loss false \
+  --beta 0 \
+  --lmbda 1.0 \
+  --use_vllm \
+  --vllm_mode server \
+  --vllm_server_base_url "http://${VLLM_HOST:-127.0.0.1}:${VLLM_PORT:-18002}" \
+  --vllm_group_port "${VLLM_GROUP_PORT:-52345}" \
+  --eval_strategy no \
+  --save_strategy steps \
+  --save_steps "${OPD_SAVE_STEPS:-300}" \
+  --report_to "${REPORT_TO:-none}" \
+  --run_name "${RUN_NAME:-llama31_8b_opd_math_rl_48k}"
+
+cd /path/to/this_repo/code/IntraAfterCoT/deepconf_modify/examples
+
+export DATA_ROOT="${DATA_ROOT:-.}"
+export OUTPUT_ROOT="${OUTPUT_ROOT:-runs/offline_pkls}"
+export TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
+
+for MODEL_TAG in instruct sft rl opd; do
+  case "${MODEL_TAG}" in
+    instruct) MODEL="${LLAMA_INSTRUCT_MODEL:-meta-llama/Llama-3.1-8B-Instruct}" ;;
+    sft) MODEL="${LLAMA_SFT_MODEL:-/path/to/llama_sft_checkpoint}" ;;
+    rl) MODEL="${LLAMA_RL_MODEL:-/path/to/llama_rl_checkpoint}" ;;
+    opd) MODEL="${LLAMA_OPD_MODEL:-${OPD_OUTPUT_DIR}}" ;;
+  esac
+
+  for SEED in 0 1 2 3 4; do
+    python example_offline.py --model "${MODEL}" --model_type llama --tensor_parallel_size "${TENSOR_PARALLEL_SIZE}" --budget 320 --max_tokens 32768 --temperature 0.6 --top_p 0.95 --top_k 0 --rid "seed${SEED}" --dataset "${DATA_ROOT}/aime_2024.jsonl" --qid_start 0 --qid_end 29 --output_dir "${OUTPUT_ROOT}/${MODEL_TAG}_aime24"
+    python example_offline.py --model "${MODEL}" --model_type llama --tensor_parallel_size "${TENSOR_PARALLEL_SIZE}" --budget 320 --max_tokens 32768 --temperature 0.6 --top_p 0.95 --top_k 0 --rid "seed${SEED}" --dataset "${DATA_ROOT}/aime_2025.jsonl" --qid_start 0 --qid_end 29 --output_dir "${OUTPUT_ROOT}/${MODEL_TAG}_aime25"
+    python example_offline.py --model "${MODEL}" --model_type llama --tensor_parallel_size "${TENSOR_PARALLEL_SIZE}" --budget 320 --max_tokens 32768 --temperature 0.6 --top_p 0.95 --top_k 0 --rid "seed${SEED}" --dataset "${DATA_ROOT}/amc23_convert.jsonl" --qid_start 0 --qid_end 39 --output_dir "${OUTPUT_ROOT}/${MODEL_TAG}_amc23"
+    python example_offline.py --model "${MODEL}" --model_type llama --tensor_parallel_size "${TENSOR_PARALLEL_SIZE}" --budget 320 --max_tokens 32768 --temperature 0.6 --top_p 0.95 --top_k 0 --rid "seed${SEED}" --dataset "${DATA_ROOT}/math500_convert.jsonl" --qid_start 0 --qid_end 499 --output_dir "${OUTPUT_ROOT}/${MODEL_TAG}_math500"
+  done
+done
